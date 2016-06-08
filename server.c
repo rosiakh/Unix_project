@@ -20,15 +20,15 @@
 #define BACKLOG 3
 #define CHUNKSIZE 2
 #define THREAD_NUM 20  // it's < 100 so max two digits are needed
-#define TURNINGS 5
-#define SPEED 4
+#define TURNINGS 2
+#define SPEED 2
 #define MAP_SIZE TURNINGS*SPEED + 1
 
 #define INITIAL_MONEY 100
 #define COLLISION_MONEY 30
 #define ORDER_MONEY 20
 
-#define TAXI_SPACE 3
+#define TAXI_SPACE 6
 #define REWRITE_TIME 1
 #define MAX_ORDERS 5
 #define INITIAL_ORDER_ID 100  // order ids have are > 99 while taxi ids < 99
@@ -284,7 +284,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	free(map);
 }
 
-// returns number of free places on map
+// returns number of free places on map and fills *x, *y
 int check_room(int **map, int *x, int *y)
 {
 	// check each turning
@@ -294,12 +294,12 @@ int check_room(int **map, int *x, int *y)
 		for(tj = 0; tj < TURNINGS; ++tj)
 		{
 			cfree = 1;
-			for(di = -TAXI_SPACE+1; di < TAXI_SPACE; ++di)  // check turnings only
+			for(di = -TAXI_SPACE*SPEED + 1; di < TAXI_SPACE*SPEED; ++di)
 			{
-				for(dj = -TAXI_SPACE+1; dj < TAXI_SPACE; ++dj)
+				for(dj = -TAXI_SPACE*SPEED + 1; dj < TAXI_SPACE*SPEED; ++dj)
 				{
-					ii = (ti + di)*SPEED;
-					jj = (tj + dj)*SPEED;
+					ii = ti*SPEED + di;
+					jj = tj*SPEED + dj;
 					if(ii >= 0 && ii < MAP_SIZE && jj >= 0 && jj < MAP_SIZE)
 					{
 						if(map[ii][jj] > 0 && map[ii][jj] < INITIAL_ORDER_ID)
