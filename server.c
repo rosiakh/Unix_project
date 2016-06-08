@@ -19,9 +19,7 @@
 
 #define BACKLOG 3
 #define CHUNKSIZE 2
-#define NMMAX 30
 #define THREAD_NUM 3  // it's < 100 so max two digits are needed
-#define FS_NUM 2
 #define TURNINGS 5
 #define SPEED 4
 #define MAP_SIZE TURNINGS*SPEED + 1
@@ -65,7 +63,6 @@ typedef struct
 	int *condition;
 	pthread_cond_t *cond;
 	pthread_mutex_t *mutex;
-	sem_t *semaphore;
 	int **map;
 	taxi_order *orders;
 	sem_t *orders_sems;
@@ -695,20 +692,15 @@ void *threadfunc(void *arg)
 
 
 
-void init(pthread_t *thread, thread_arg *targ, sem_t *semaphore, pthread_cond_t *cond, pthread_mutex_t *mutex, 
+void init(pthread_t *thread, thread_arg *targ, pthread_cond_t *cond, pthread_mutex_t *mutex, 
 	int *idlethreads, int *socket, int *condition, int **map, taxi_order *orders, sem_t *orders_sems)
-{
+{	
 	int i;
-
-	if (sem_init(semaphore, 0, FS_NUM) != 0)
-		ERR("sem_init");
-
 	for (i = 0; i < THREAD_NUM; i++)
 	{
 		targ[i].id = i + 1;
 		targ[i].cond = cond;
 		targ[i].mutex = mutex;
-		targ[i].semaphore = semaphore;
 		targ[i].idlethreads = idlethreads;
 		targ[i].socket = socket;
 		targ[i].condition = condition;
@@ -799,10 +791,14 @@ void dowork(int socket, pthread_t *thread, thread_arg *targ, pthread_cond_t *con
 	}
 }
 
-void pcleanup(sem_t *semaphore, pthread_mutex_t *mutex, pthread_cond_t *cond)
+void pcleanup(sem_t *orders_sems, pthread_mutex_t *mutex, pthread_cond_t *cond)
 {
-	if (sem_destroy(semaphore) != 0)
-		ERR("sem_destroy");
+	int i;
+	for(i = 0; i < MAX_ORDERS; ++i)
+	{
+		if (sem_destroy(&orders_sems[i]) != 0)
+			ERR("sem_destroy");
+	}
 	if (pthread_mutex_destroy(mutex) != 0)
 		ERR("pthread_mutex_destroy");
 	if (pthread_cond_destroy(cond) != 0)
@@ -812,8 +808,7 @@ void pcleanup(sem_t *semaphore, pthread_mutex_t *mutex, pthread_cond_t *cond)
 
 void fill_map(int **map)
 {
-	int i, j;
-	
+	int i, j;	
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
 		for(j = 0; j < MAP_SIZE; ++j)
@@ -833,7 +828,6 @@ void fill_map(int **map)
 void genereate_new_order(taxi_order *orders, int *next_order_id)
 {
 	int i;
-	
 	for(i = 0; i < MAX_ORDERS; ++i)
 	{
 		if(!orders[i].active)
@@ -885,7 +879,6 @@ int main(int argc, char **argv)
 	pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	sigset_t mask, oldmask;
-	sem_t semaphore;
 	
 	// taxi orders preparation & orders thread creation
 	taxi_order orders[MAX_ORDERS];
@@ -930,7 +923,7 @@ int main(int argc, char **argv)
 	
 	//fill_map(map);
 	
-	init(thread, targ, &semaphore, &cond, &mutex, &idlethreads, &cfd, &condition, map, orders, orders_sems);
+	init(thread, targ, &cond, &mutex, &idlethreads, &cfd, &condition, map, orders, orders_sems);
 	
 	dowork(socket, thread, targ, &cond, &mutex, &idlethreads, &cfd, &oldmask, &condition, map);
 	
@@ -939,7 +932,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < THREAD_NUM; i++)
 		if (pthread_join(thread[i], NULL) != 0)
 			ERR("pthread_join");
-	pcleanup(&semaphore, &mutex, &cond);
+	pcleanup(orders_sems, &mutex, &cond);
 	
 	if (TEMP_FAILURE_RETRY(close(socket)) < 0)
 		ERR("close");
