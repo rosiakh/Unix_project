@@ -19,7 +19,7 @@
 
 #define BACKLOG 3
 #define CHUNKSIZE 2
-#define THREAD_NUM 3  // it's < 100 so max two digits are needed
+#define THREAD_NUM 20  // it's < 100 so max two digits are needed
 #define TURNINGS 5
 #define SPEED 4
 #define MAP_SIZE TURNINGS*SPEED + 1
@@ -75,6 +75,8 @@ typedef struct
 	int *cash;
 	int taxi_id;
 	taxi_order *orders;
+	int *dx;
+	int *dy;
 } timer_arg;
 
 typedef struct
@@ -172,6 +174,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	int **ext_map = targ->map;
 	taxi_order *orders = targ->orders;
 	int order = get_order(targ->taxi_id, orders);
+	int *dx = targ->dx, *dy = targ->dy;
 	
 	// copy map to local memory before sending
 	int **map;
@@ -258,6 +261,16 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	// orders
 	//sprintf(c, "orders: %d\n", order);
 	//write(clientfd, c, strlen(c));
+	
+	// direction
+	char *dir;
+	if(*dx == -1) dir = "up";
+	if(*dx == 1) dir = "down";
+	if(*dy == -1) dir = "left";
+	if(*dy == 1) dir = "right";
+	
+	sprintf(c, "direction: %s\n", dir);
+	write(clientfd, c, strlen(c));
 }
 
 // returns number of free places on map
@@ -346,13 +359,16 @@ void *map_timer_func(void *arg)
 	return NULL;
 }
 
-void set_map_timer(pthread_t *timer_p, int taxi_id, int clientfd, int **map, int *cash, taxi_order *orders, timer_arg *arg)
+void set_map_timer(pthread_t *timer_p, int taxi_id, int clientfd, int **map, int *cash, taxi_order *orders, timer_arg *arg,
+	int *dx, int *dy)
 {
 	arg->clientfd = clientfd;
 	arg->map = map;
 	arg->cash = cash;
 	arg->taxi_id = taxi_id;
 	arg->orders = orders;
+	arg->dx = dx;
+	arg->dy = dy;
 	
 	if (pthread_create(timer_p, NULL, map_timer_func, (void *)arg) != 0)
 			ERR("pthread_create");
@@ -637,7 +653,7 @@ void communicate(int clientfd, thread_arg *targ)
 	// create thread for map refreshing
 	pthread_t timer_p;
 	timer_arg t_arg;
-	set_map_timer(&timer_p, targ->id, clientfd, targ->map, &cash, targ->orders, &t_arg);
+	set_map_timer(&timer_p, targ->id, clientfd, targ->map, &cash, targ->orders, &t_arg, &dx, &dy);
 	
 	// create thread for client input
 	pthread_t client_p;
