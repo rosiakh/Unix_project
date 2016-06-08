@@ -19,7 +19,7 @@
 
 #define BACKLOG 3
 #define CHUNKSIZE 2
-#define THREAD_NUM 20  // it's < 100 so max two digits are needed
+#define THREAD_NUM 20
 #define TURNINGS 2
 #define SPEED 2
 #define MAP_SIZE TURNINGS*SPEED + 1
@@ -28,10 +28,10 @@
 #define COLLISION_MONEY 30
 #define ORDER_MONEY 20
 
-#define TAXI_SPACE 6
+#define TAXI_SPACE 7
 #define REWRITE_TIME 1
 #define MAX_ORDERS 5
-#define INITIAL_ORDER_ID 100  // order ids have are > 99 while taxi ids < 99
+#define INITIAL_ORDER_ID 100  // order ids are > 99 while taxi ids < 99
 
 #define COLLISION_TIME 3
 #define ORDER_TIME 3
@@ -39,20 +39,20 @@
 #define MIN_NEW_ORDER_TIME 5
 #define MAX_NEW_ORDER_TIME 10
 
-#define ERRSTRING "No such file or directory\n"
+#define ERRSTRING "Sorry but there is no room for a new player\n"
 
 volatile sig_atomic_t work = 1;
 
 typedef struct
 {
-	int order_id;  // to distinguish orders with the same source & destination
+	int order_id;
 	int x_from;
 	int y_from;
 	int x_to;
 	int y_to;
 	int taxi_id;  // meaningful only if taken and active are true - thread id of taxi thread (not pthread_t!)
 	int taken;  // true if some taxi has already taken this order
-	int active;  // true if this order is active (taken/available); false means this data is meaningless
+	int active;  // true if this order is active (taken/available); false means other data is meaningless
 } taxi_order;
 
 typedef struct
@@ -336,7 +336,8 @@ int make_socket(int domain, int type)
 
 void close_client_no_room(int clientfd)
 {
-	char *msg = "Sorry but there is no room for new player\n";
+	char msg[256];
+	sprintf(msg, ERRSTRING);
 	if(TEMP_FAILURE_RETRY(write(clientfd, msg, strlen(msg))) == -1)
 		ERR("write");
 	pthread_exit(NULL);
