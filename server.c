@@ -27,7 +27,7 @@
 #define MAP_SIZE TURNINGS*SPEED + 1
 
 #define INITIAL_MONEY 100
-#define COLLISION_MONEY 50
+#define COLLISION_MONEY 30
 #define ORDER_MONEY 20
 
 #define TAXI_SPACE 3
@@ -217,7 +217,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	{
 		for(j = 0; j < MAP_SIZE; ++j)
 		{
-			if(map[i][j] >= INITIAL_ORDER_ID)  // bad if there are more than 40 players
+			if(map[i][j] >= INITIAL_ORDER_ID)
 			{
 				sprintf(buf, "%c", map[i][j] - INITIAL_ORDER_ID);
 			}
@@ -239,6 +239,10 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 				{
 					sprintf(buf, "%c", ' ');
 				}
+			}
+			else if(map[i][j] == targ->taxi_id)
+			{
+				sprintf(buf, "%c", 'P');
 			}
 			else
 			{
@@ -356,7 +360,9 @@ void set_map_timer(pthread_t *timer_p, int taxi_id, int clientfd, int **map, int
 			ERR("pthread_create");
 }
 
-// result in nx, ny
+// (x,y) - current position
+// (*dx,*dy) - vector of planned translation
+// (nx,ny) - result taking into account map borders
 void calculate_new_position(int x, int y, int *dx, int *dy, int *nx, int *ny)
 {
 	// provisional new position
@@ -440,9 +446,11 @@ void *client_thread_func(void *arg)
 		switch(buffer[0])
 		{
 			case 'l': 
+			case 'L':
 				turn_left(&c_arg);
 				break;
 			case 'p':
+			case 'P':
 				turn_right(&c_arg);
 				break;
 			default:
@@ -462,10 +470,6 @@ void set_client_thread(pthread_t *p, int clientfd, client_thread_arg *c_arg, int
 		ERR("pthread create");
 }
 
-void check_collision(int nx, int ny, thread_arg *targ, int *cash)
-{
-	
-}
 
 // (nx, ny) - new position that taxi wants to move on
 void check_order(int nx, int ny, thread_arg *targ, int *cash)
@@ -493,8 +497,42 @@ void check_order(int nx, int ny, thread_arg *targ, int *cash)
 				for(t = ORDER_TIME; t > 0; t = sleep(t));
 			}
 		}
+	}	
+}
+
+// nx, ny - position that is going to be taken by taxi
+int check_collision(thread_arg *targ, int *x, int *y, int *dx, int *dy, int *ndx, int *ndy, int *nx, int *ny, int *sign_under_taxi, int *cash)
+{
+	int m = (targ->map)[*nx][*ny], t, col = 0;
+	if(m > 0 && m < INITIAL_ORDER_ID)  // must be taxi id so collision
+	{
+		for(t = COLLISION_TIME; t > 0; t = sleep(t));
+		
+		(*cash) -= COLLISION_MONEY;
+		(*ndx) *= -1;
+		(*ndy) *= -1;
+		*nx = *x;
+		*ny = *y;
+		col = 1;
 	}
 	
+	return col;
+}
+
+// *x + *ndx = *ny
+void move_taxi(thread_arg *targ, int *x, int *y, int *dx, int *dy, int *ndx, int *ndy, int *nx, int *ny, int *sign_under_taxi, int *cash)
+{
+	if(!check_collision(targ, x, y, dx, dy, ndx, ndy, nx, ny, sign_under_taxi, cash))
+	{
+		(targ->map)[*x][*y] = *sign_under_taxi;
+		(targ->map)[*nx][*ny] = targ->id;
+	}
+	
+	// update taxi position and direction
+	*x = *nx;
+	*y = *ny;
+	*dx = *ndx;
+	*dy = *ndy;
 }
 
 // actual moving & collisions and orders checking
@@ -523,8 +561,7 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 					ndx = *dy;
 					ndy = -1*(*dx);
 					break;
-			default:
-					break;  // some error
+			//default:  // some error
 		}
 		*dir = 0;  // reset player direction
 	}
@@ -537,23 +574,30 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 	
 	int nx, ny;
 	
+	// check map borders
 	calculate_new_position(*x, *y, &ndx, &ndy, &nx, &ny);
 	
-	// check collision before moving
-	check_collision(nx, ny, targ, cash);
-	
 	// function for moving taxi
-	map[*x][*y] = *sign_under_taxi;
-	map[nx][ny] = id;
-
-	// update taxi position and direction
-	*x = nx;
-	*y = ny;
-	*dx = ndx;
-	*dy = ndy;
-	
+	move_taxi(targ, x, y, dx, dy, &ndx, &ndy, &nx, &ny, sign_under_taxi, cash);
+		
 	// check order after moving
 	check_order(*x, *y, targ, cash);
+}
+
+void clear_orders_on_disconnect(thread_arg *targ)
+{
+	int i;
+	taxi_order *orders = targ->orders;
+	for(i = 0; i < MAX_ORDERS; ++i)
+	{
+		if(orders[i].active)
+		{
+			if(orders[i].taxi_id == targ->id)
+			{
+				orders[i].active = 0;
+			}
+		}
+	}
 }
 
 // initial functions for first pthreads
@@ -591,6 +635,7 @@ void communicate(int clientfd, thread_arg *targ)
 	}
 	
 	// clear orders & map on closing communication
+	clear_orders_on_disconnect(targ);
 }
 
 void cleanup(void *arg)
