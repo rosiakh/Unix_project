@@ -173,6 +173,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	int cash = *(targ->cash);
 	int **ext_map = targ->map;
 	taxi_order *orders = targ->orders;
+	int order = get_order(targ->taxi_id, orders);
 	
 	// copy map to local memory before sending
 	int **map;
@@ -197,11 +198,17 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 		{
 			//map[orders[i].x_from][orders[i].y_from] = orders[i].order_id*10;
 			//map[orders[i].x_to][orders[i].y_to] = orders[i].order_id*10 + 1;
-			if(!orders[i].taken)
+			if(order > -1)
+			{
+				if(orders[i].order_id == order)
+				{
+					map[orders[i].x_to][orders[i].y_to] = c2 + i;
+				}
+			}
+			else if(!orders[i].taken)
 			{
 				map[orders[i].x_from][orders[i].y_from] = c1 + i;
 			}
-			map[orders[i].x_to][orders[i].y_to] = c2 + i;
 		}
 	}
 	
@@ -247,9 +254,8 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	write(clientfd, c, strlen(c));
 	
 	// orders
-	int order = get_order(targ->taxi_id, orders);
-	sprintf(c, "orders: %d\n", order);
-	write(clientfd, c, strlen(c));
+	//sprintf(c, "orders: %d\n", order);
+	//write(clientfd, c, strlen(c));
 }
 
 // returns number of free places on map
@@ -577,8 +583,8 @@ void communicate(int clientfd, thread_arg *targ)
 	set_client_thread(&client_p, clientfd, &c_arg, &dir); 
 	
 	// move taxi every second
-	int t, done = 0;
-	while(!done && work)
+	int t;
+	while(cash > 0 && work)
 	{
 		for(t = 1; t > 0; t = sleep(t));
 		update_map(&x, &y, &dx, &dy, &dir, targ, &sign_under_taxi, &cash);
