@@ -20,24 +20,24 @@
 #define BACKLOG 3
 #define CHUNKSIZE 2
 #define THREAD_NUM 20
-#define TURNINGS 2
-#define SPEED 2
+#define TURNINGS 10
+#define SPEED 10
 #define MAP_SIZE TURNINGS*SPEED + 1
 
 #define INITIAL_MONEY 100
-#define COLLISION_MONEY 30
+#define COLLISION_MONEY 50
 #define ORDER_MONEY 20
 
-#define TAXI_SPACE 7
+#define TAXI_SPACE 3
 #define REWRITE_TIME 1
 #define MAX_ORDERS 5
 #define INITIAL_ORDER_ID 100  // order ids are > 99 while taxi ids < 99
 
-#define COLLISION_TIME 3
-#define ORDER_TIME 3
+#define COLLISION_TIME 10
+#define ORDER_TIME 10
 
-#define MIN_NEW_ORDER_TIME 5
-#define MAX_NEW_ORDER_TIME 10
+#define MIN_NEW_ORDER_TIME 10
+#define MAX_NEW_ORDER_TIME 30
 
 #define ERRSTRING "Sorry but there is no room for a new player\n"
 
@@ -168,15 +168,10 @@ int get_order(int taxi_id, taxi_order *orders)
 
 void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 {
-	int i, j;
+	int i, j, cash = *(targ->cash), *dx = targ->dx, *dy = targ->dy, **ext_map = targ->map, order = get_order(targ->taxi_id, targ->orders);
 	char buf[3], c[30], *eol = "\n";
-	int cash = *(targ->cash);
-	int **ext_map = targ->map;
 	taxi_order *orders = targ->orders;
-	int order = get_order(targ->taxi_id, orders);
-	int *dx = targ->dx, *dy = targ->dy;
 	
-	// copy map to local memory before sending
 	int **map;
 	map = (int**)malloc(sizeof(int*)*MAP_SIZE);
 	for(i = 0; i < MAP_SIZE; ++i)
@@ -197,8 +192,6 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	{
 		if(orders[i].active)
 		{
-			//map[orders[i].x_from][orders[i].y_from] = orders[i].order_id*10;
-			//map[orders[i].x_to][orders[i].y_to] = orders[i].order_id*10 + 1;
 			if(order > -1)
 			{
 				if(orders[i].order_id == order)
@@ -213,7 +206,8 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 		}
 	}
 	
-	write(clientfd, eol, strlen(eol));
+	if(TEMP_FAILURE_RETRY(write(clientfd, eol, strlen(eol))) == -1)
+		ERR("write");
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
 		for(j = 0; j < MAP_SIZE; ++j)
@@ -260,11 +254,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	sprintf(c, "cash: %d\n", cash);
 	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
 		ERR("write");
-	
-	// orders
-	//sprintf(c, "orders: %d\n", order);
-	//write(clientfd, c, strlen(c));
-	
+
 	// direction
 	char *dir;
 	if(*dx == -1) dir = "up";
@@ -276,7 +266,6 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
 		ERR("write");
 	
-	// free memory
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
 		free(map[i]);
@@ -304,9 +293,7 @@ int check_room(int **map, int *x, int *y)
 					{
 						if(map[ii][jj] > 0 && map[ii][jj] < INITIAL_ORDER_ID)
 						{
-							//printf("taken [%d][%d]\n", ii, jj);
 							cfree = 0;
-							//break;
 						}
 					}
 				}
@@ -316,7 +303,6 @@ int check_room(int **map, int *x, int *y)
 				*x = tj*SPEED;
 				*y = ti*SPEED;
 				++free_places;
-				//break;
 			}
 		}
 	}
@@ -349,26 +335,15 @@ void put_player_on_map(int **map, int x, int y, int id, int *sign_under_taxi)
 	map[x][y] = id;
 }
 
-
-
-
 // timer thread for rewriting map to client
 void *map_timer_func(void *arg)
 {
-	// signals
-	//sigset_t mask, oldmask;
-
-	//sethandler(SIG_IGN, SIGPIPE);
-	//sethandler(timer_siginthandler, SIGINT);
-	//sigemptyset(&mask);
-	//sigaddset(&mask, SIGINT);
-	
-	int t, done = 0;
+	int t;
 	timer_arg targ;
 	
 	memcpy(&targ, arg, sizeof(targ));
 	
-	while(!done)
+	while(1)
 	{
 		if(!work)
 			pthread_exit(NULL);
@@ -452,22 +427,9 @@ void turn_right(client_thread_arg *arg)
 	*(arg->dir) = 1;
 }
 
-
-
-
-// thread for client input: 'l' and 'p'
+// thread for client input
 void *client_thread_func(void *arg)
 {
-	// signals
-	//sigset_t mask, oldmask;
-
-	///sethandler(SIG_IGN, SIGPIPE);
-	//sethandler(client_siginthandler, SIGINT);
-	//sigemptyset(&mask);
-	//sigaddset(&mask, SIGINT);
-	
-	
-	int done = 0;
 	client_thread_arg c_arg;
 	
 	memcpy(&c_arg, arg, sizeof(c_arg));
@@ -475,7 +437,7 @@ void *client_thread_func(void *arg)
 	ssize_t size;
 	char buffer[CHUNKSIZE];
 	
-	while(!done)
+	while(1)
 	{
 		if(!work)
 			pthread_exit(NULL);
@@ -526,7 +488,7 @@ void check_order(int nx, int ny, thread_arg *targ, int *cash)
 			{
 				if(get_order(targ->id, orders) < 0)
 				{
-					orders[i].taken = 1;  // checking and taking order should be atomic operation
+					orders[i].taken = 1;
 					orders[i].taxi_id = targ->id;
 					
 					if (sem_post(&((targ->orders_sems)[i])) == -1)
@@ -593,7 +555,7 @@ void move_taxi(thread_arg *targ, int *x, int *y, int *dx, int *dy, int *ndx, int
 	*dy = *ndy;
 }
 
-// actual moving & collisions and orders checking
+// actual moving & collisions and taxi orders checking
 void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, int *sign_under_taxi, int *cash)
 {
 	int ndx, ndy, cdir = *dir;
@@ -601,7 +563,7 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 	// check if taxi is on turning and calculate new (dx, dy)
 	if(*x % SPEED == 0 && *y % SPEED == 0)
 	{
-		switch(cdir)  // using cdir to prevent *dir change during switch
+		switch(cdir)
 		{
 			case -1:				
 					ndx = -1*(*dy);
@@ -615,7 +577,6 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 					ndx = *dy;
 					ndy = -1*(*dx);
 					break;
-			//default:  // some error
 		}
 		*dir = 0;  // reset player direction
 	}
@@ -653,27 +614,17 @@ void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi, pt
 	}
 	
 	(targ->map)[x][y] = sign_under_taxi;
-	//kill(timer_p, SIGINT);
-	//kill(client_p, SIGINT);
-	
-	//puts("before join disconnect");
-	//if (pthread_join(timer_p, NULL) != 0)
-		//ERR("pthread_join");
-	//if (pthread_join(client_p, NULL) != 0)
-		//ERR("pthread_join");
-	//puts("after join disconnect");
 }
 
-// initial functions for first pthreads
 void communicate(int clientfd, thread_arg *targ)
 {
 	int x, y, cash = INITIAL_MONEY;
-	int dx = 0, dy = -1;  // current taxi direction (should be random)
+	int dx = 0, dy = -1;  // current taxi direction 
 	int dir = 0;  // initially taxi does not turn on turnings
 	int sign_under_taxi;
 	
 	// check if there is a room for a new player
-	if(check_room(targ->map, &x, &y) == 0)  // x, y should be assigned random
+	if(check_room(targ->map, &x, &y) == 0)  // x, y are assigned inside function
 	{
 		close_client_no_room(clientfd);
 	}
@@ -734,9 +685,6 @@ void *threadfunc(void *arg)
 
 	return NULL;
 }
-
-
-
 
 void init(pthread_t *thread, thread_arg *targ, pthread_cond_t *cond, pthread_mutex_t *mutex, 
 	int *idlethreads, int *socket, int *condition, int **map, taxi_order *orders, sem_t *orders_sems)
@@ -887,7 +835,6 @@ void genereate_new_order(taxi_order *orders, int *next_order_id)
 			orders[i].active = 1;
 			
 			(*next_order_id)++;
-			//puts("generated order");
 			break;
 		}
 	}
@@ -972,18 +919,15 @@ int main(int argc, char **argv)
 	if (pthread_cond_broadcast(&cond) != 0)
 		ERR("pthread_cond_broadcast");
 		
-	//puts("before main join");	
 	for (i = 0; i < THREAD_NUM; i++)
 		if (pthread_join(thread[i], NULL) != 0)
-			ERR("pthread_join");
-	//puts("after main join");		
+			ERR("pthread_join");	
 	
 	pcleanup(orders_sems, &mutex, &cond);
 	
 	if (TEMP_FAILURE_RETRY(close(socket)) < 0)
 		ERR("close");
 		
-	// free memory
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
 		free(map[i]);
