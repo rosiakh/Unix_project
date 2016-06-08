@@ -618,7 +618,7 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 	check_order(*x, *y, targ, cash);
 }
 
-void clear_orders_on_disconnect(thread_arg *targ)
+void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi)
 {
 	int i;
 	taxi_order *orders = targ->orders;
@@ -632,6 +632,8 @@ void clear_orders_on_disconnect(thread_arg *targ)
 			}
 		}
 	}
+	
+	(targ->map)[x][y] = sign_under_taxi;
 }
 
 // initial functions for first pthreads
@@ -669,7 +671,7 @@ void communicate(int clientfd, thread_arg *targ)
 	}
 	
 	// clear orders & map on closing communication
-	clear_orders_on_disconnect(targ);
+	clear_on_disconnect(targ, x, y, sign_under_taxi);
 }
 
 void cleanup(void *arg)
