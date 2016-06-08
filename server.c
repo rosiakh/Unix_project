@@ -249,14 +249,17 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 			{
 				sprintf(buf, "%d", map[i][j]);
 			}
-			write(clientfd, buf, strlen(buf));
+			if(TEMP_FAILURE_RETRY(write(clientfd, buf, strlen(buf))) == -1)
+				ERR("write");
 		}
-		write(clientfd, eol, strlen(eol));
+		if(TEMP_FAILURE_RETRY(write(clientfd, eol, strlen(eol))) == -1)
+			ERR("write");
 	}
 	
 	// cash
 	sprintf(c, "cash: %d\n", cash);
-	write(clientfd, c, strlen(c));
+	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
+		ERR("write");
 	
 	// orders
 	//sprintf(c, "orders: %d\n", order);
@@ -270,7 +273,15 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	if(*dy == 1) dir = "right";
 	
 	sprintf(c, "direction: %s\n", dir);
-	write(clientfd, c, strlen(c));
+	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
+		ERR("write");
+	
+	// free memory
+	for(i = 0; i < MAP_SIZE; ++i)
+	{
+		free(map[i]);
+	}
+	free(map);
 }
 
 // returns number of free places on map
@@ -293,7 +304,7 @@ int check_room(int **map, int *x, int *y)
 					{
 						if(map[ii][jj] > 0 && map[ii][jj] < INITIAL_ORDER_ID)
 						{
-							printf("taken [%d][%d]\n", ii, jj);
+							//printf("taken [%d][%d]\n", ii, jj);
 							cfree = 0;
 							//break;
 						}
@@ -326,7 +337,8 @@ int make_socket(int domain, int type)
 void close_client_no_room(int clientfd)
 {
 	char *msg = "Sorry but there is no room for new player\n";
-	write(clientfd, msg, strlen(msg));
+	if(TEMP_FAILURE_RETRY(write(clientfd, msg, strlen(msg))) == -1)
+		ERR("write");
 	pthread_exit(NULL);
 }
 
@@ -342,6 +354,14 @@ void put_player_on_map(int **map, int x, int y, int id, int *sign_under_taxi)
 // timer thread for rewriting map to client
 void *map_timer_func(void *arg)
 {
+	// signals
+	//sigset_t mask, oldmask;
+
+	//sethandler(SIG_IGN, SIGPIPE);
+	//sethandler(timer_siginthandler, SIGINT);
+	//sigemptyset(&mask);
+	//sigaddset(&mask, SIGINT);
+	
 	int t, done = 0;
 	timer_arg targ;
 	
@@ -431,16 +451,21 @@ void turn_right(client_thread_arg *arg)
 	*(arg->dir) = 1;
 }
 
-void prompt_user()
-{
-}
-
 
 
 
 // thread for client input: 'l' and 'p'
 void *client_thread_func(void *arg)
 {
+	// signals
+	//sigset_t mask, oldmask;
+
+	///sethandler(SIG_IGN, SIGPIPE);
+	//sethandler(client_siginthandler, SIGINT);
+	//sigemptyset(&mask);
+	//sigaddset(&mask, SIGINT);
+	
+	
 	int done = 0;
 	client_thread_arg c_arg;
 	
@@ -467,8 +492,6 @@ void *client_thread_func(void *arg)
 			case 'P':
 				turn_right(&c_arg);
 				break;
-			default:
-				prompt_user();
 		}
 	}
 	
@@ -572,15 +595,11 @@ void move_taxi(thread_arg *targ, int *x, int *y, int *dx, int *dy, int *ndx, int
 // actual moving & collisions and orders checking
 void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, int *sign_under_taxi, int *cash)
 {
-	int turning, ndx, ndy, cdir = *dir;
-	int id = targ->id, **map = targ->map;
-	//taxi_order *orders = targ->orders;
-	//srand(time(NULL));	
+	int ndx, ndy, cdir = *dir;
 		
 	// check if taxi is on turning and calculate new (dx, dy)
 	if(*x % SPEED == 0 && *y % SPEED == 0)
 	{
-		turning = 1;
 		switch(cdir)  // using cdir to prevent *dir change during switch
 		{
 			case -1:				
@@ -601,7 +620,6 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 	}
 	else
 	{
-		turning = 0;
 		ndx = *dx;
 		ndy = *dy;
 	}
@@ -618,7 +636,7 @@ void update_map(int *x, int *y, int *dx, int *dy, int *dir, thread_arg *targ, in
 	check_order(*x, *y, targ, cash);
 }
 
-void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi)
+void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi, pthread_t timer_p, pthread_t client_p)
 {
 	int i;
 	taxi_order *orders = targ->orders;
@@ -634,6 +652,15 @@ void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi)
 	}
 	
 	(targ->map)[x][y] = sign_under_taxi;
+	//kill(timer_p, SIGINT);
+	//kill(client_p, SIGINT);
+	
+	//puts("before join disconnect");
+	//if (pthread_join(timer_p, NULL) != 0)
+		//ERR("pthread_join");
+	//if (pthread_join(client_p, NULL) != 0)
+		//ERR("pthread_join");
+	//puts("after join disconnect");
 }
 
 // initial functions for first pthreads
@@ -671,7 +698,7 @@ void communicate(int clientfd, thread_arg *targ)
 	}
 	
 	// clear orders & map on closing communication
-	clear_on_disconnect(targ, x, y, sign_under_taxi);
+	clear_on_disconnect(targ, x, y, sign_under_taxi, timer_p, client_p);
 }
 
 void cleanup(void *arg)
@@ -823,7 +850,6 @@ void pcleanup(sem_t *orders_sems, pthread_mutex_t *mutex, pthread_cond_t *cond)
 		ERR("pthread_cond_destroy");
 }
 
-
 void fill_map(int **map)
 {
 	int i, j;	
@@ -860,7 +886,7 @@ void genereate_new_order(taxi_order *orders, int *next_order_id)
 			orders[i].active = 1;
 			
 			(*next_order_id)++;
-			puts("generated order");
+			//puts("generated order");
 			break;
 		}
 	}
@@ -912,10 +938,9 @@ int main(int argc, char **argv)
 	pthread_t orders_thread;
 	orders_thread_arg oarg;
 	oarg.orders_tab = orders;
-	pthread_create(&orders_thread, NULL, orders_thread_func, (void *)&oarg);
+	if(pthread_create(&orders_thread, NULL, orders_thread_func, (void *)&oarg) != 0)
+		ERR("pthread_create");
 	
-
-	// check parameters
 	if (argc!=2)
 		usage(argv[0]);
 
@@ -924,6 +949,7 @@ int main(int argc, char **argv)
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
 	sigprocmask(SIG_BLOCK, &mask, &oldmask);
+	//pthread_sigmask(SIG_BLOCK, &mask, &oldmask);
 	
 	socket = bind_tcp_socket(atoi(argv[1]));
 	new_flags = fcntl(socket, F_GETFL) | O_NONBLOCK;
@@ -935,11 +961,8 @@ int main(int argc, char **argv)
 	map = (int**)malloc(sizeof(int*)*MAP_SIZE);
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
-		//map[i] = (int*)malloc(sizeof(int)*MAP_SIZE);
 		map[i] = (int*)calloc(MAP_SIZE, sizeof(int));
 	}
-	
-	//fill_map(map);
 	
 	init(thread, targ, &cond, &mutex, &idlethreads, &cfd, &condition, map, orders, orders_sems);
 	
@@ -947,9 +970,13 @@ int main(int argc, char **argv)
 	
 	if (pthread_cond_broadcast(&cond) != 0)
 		ERR("pthread_cond_broadcast");
+		
+	//puts("before main join");	
 	for (i = 0; i < THREAD_NUM; i++)
 		if (pthread_join(thread[i], NULL) != 0)
 			ERR("pthread_join");
+	//puts("after main join");		
+	
 	pcleanup(orders_sems, &mutex, &cond);
 	
 	if (TEMP_FAILURE_RETRY(close(socket)) < 0)
