@@ -68,6 +68,7 @@ typedef struct
 	sem_t *semaphore;
 	int **map;
 	taxi_order *orders;
+	sem_t *orders_sems;
 } thread_arg;
 
 typedef struct
@@ -481,21 +482,41 @@ void check_order(int nx, int ny, thread_arg *targ, int *cash)
 	{
 		if(orders[i].active)
 		{
+			if (TEMP_FAILURE_RETRY(sem_wait(&((targ->orders_sems)[i]))) == -1)
+				ERR("sem_wait");
+				
 			if(orders[i].taken == 0 && orders[i].x_from == nx && orders[i].y_from == ny)  // take available order
 			{
 				if(get_order(targ->id, orders) < 0)
 				{
-					orders[i].taken = 1;  // should be atomic operation
+					orders[i].taken = 1;  // checking and taking order should be atomic operation
 					orders[i].taxi_id = targ->id;
+					
+					if (sem_post(&((targ->orders_sems)[i])) == -1)
+						ERR("sem_post");
+					
 					for(t = ORDER_TIME; t > 0; t = sleep(t));				
+				}
+				else
+				{
+					if (sem_post(&((targ->orders_sems)[i])) == -1)
+						ERR("sem_post");
 				}
 			}
 			else if(orders[i].taxi_id == targ->id && orders[i].x_to == nx && orders[i].y_to == ny)  // drop client & finish order
 			{
+				if (sem_post(&((targ->orders_sems)[i])) == -1)
+					ERR("sem_post");
+				
 				orders[i].active = 0;
 				(*cash) += ORDER_MONEY;				
 				for(t = ORDER_TIME; t > 0; t = sleep(t));
 			}
+			else
+			{
+				if (sem_post(&((targ->orders_sems)[i])) == -1)
+					ERR("sem_post");
+			}					
 		}
 	}	
 }
@@ -675,7 +696,7 @@ void *threadfunc(void *arg)
 
 
 void init(pthread_t *thread, thread_arg *targ, sem_t *semaphore, pthread_cond_t *cond, pthread_mutex_t *mutex, 
-	int *idlethreads, int *socket, int *condition, int **map, taxi_order *orders)
+	int *idlethreads, int *socket, int *condition, int **map, taxi_order *orders, sem_t *orders_sems)
 {
 	int i;
 
@@ -693,6 +714,7 @@ void init(pthread_t *thread, thread_arg *targ, sem_t *semaphore, pthread_cond_t 
 		targ[i].condition = condition;
 		targ[i].map = map;
 		targ[i].orders = orders;
+		targ[i].orders_sems = orders_sems;
 		
 		if (pthread_create(&thread[i], NULL, threadfunc, (void *)&targ[i]) != 0)
 			ERR("pthread_create");
@@ -866,10 +888,14 @@ int main(int argc, char **argv)
 	sem_t semaphore;
 	
 	// taxi orders preparation & orders thread creation
-	taxi_order orders[5];
+	taxi_order orders[MAX_ORDERS];
+	sem_t orders_sems[MAX_ORDERS];
+	
 	for(i = 0; i < MAX_ORDERS; ++i)
 	{
 		orders[i].active = 0;
+		if (sem_init(&orders_sems[i], 0, 1) != 0)
+			ERR("sem_init");
 	}
 	
 	pthread_t orders_thread;
@@ -902,9 +928,9 @@ int main(int argc, char **argv)
 		map[i] = (int*)calloc(MAP_SIZE, sizeof(int));
 	}
 	
-	fill_map(map);
+	//fill_map(map);
 	
-	init(thread, targ, &semaphore, &cond, &mutex, &idlethreads, &cfd, &condition, map, orders);
+	init(thread, targ, &semaphore, &cond, &mutex, &idlethreads, &cfd, &condition, map, orders, orders_sems);
 	
 	dowork(socket, thread, targ, &cond, &mutex, &idlethreads, &cfd, &oldmask, &condition, map);
 	
