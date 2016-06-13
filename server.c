@@ -20,8 +20,8 @@
 #define BACKLOG 3
 #define CHUNKSIZE 2
 #define THREAD_NUM 20
-#define TURNINGS 10
-#define SPEED 10
+#define TURNINGS 4
+#define SPEED 4
 #define MAP_SIZE TURNINGS*SPEED + 1
 
 #define INITIAL_MONEY 100
@@ -33,15 +33,16 @@
 #define MAX_ORDERS 5
 #define INITIAL_ORDER_ID 100  // order ids are > 99 while taxi ids < 99
 
-#define COLLISION_TIME 10
-#define ORDER_TIME 10
+#define COLLISION_TIME 5
+#define ORDER_TIME 5
 
-#define MIN_NEW_ORDER_TIME 10
-#define MAX_NEW_ORDER_TIME 30
+#define MIN_NEW_ORDER_TIME 3
+#define MAX_NEW_ORDER_TIME 8
 
 #define ERRSTRING "Sorry but there is no room for a new player\n"
 
 volatile sig_atomic_t work = 1;
+volatile sig_atomic_t work_tab[THREAD_NUM];
 
 typedef struct
 {
@@ -70,6 +71,7 @@ typedef struct
 
 typedef struct
 {
+	int thread_id;
 	int clientfd;
 	int **map;
 	int *cash;
@@ -81,6 +83,7 @@ typedef struct
 
 typedef struct
 {
+	int id;
 	int clientfd;
 	int *dir;  // -1 = left, 1 = right, 0 = don't turn on turnings
 } client_thread_arg;
@@ -166,6 +169,17 @@ int get_order(int taxi_id, taxi_order *orders)
 	return -1;
 }
 
+void free_map(int **map)
+{
+	
+	int i;
+	for(i = 0; i < MAP_SIZE; ++i)
+	{
+		free(map[i]);
+	}
+	free(map);
+}
+
 void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 {
 	int i, j, cash = *(targ->cash), *dx = targ->dx, *dy = targ->dy, **ext_map = targ->map, order = get_order(targ->taxi_id, targ->orders);
@@ -207,7 +221,15 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	}
 	
 	if(TEMP_FAILURE_RETRY(write(clientfd, eol, strlen(eol))) == -1)
-		ERR("write");
+	{
+		if(errno == EPIPE)
+		{
+			work_tab[targ->thread_id - 1] = 0;
+			free_map(map);
+			return;
+		}
+		else ERR("write");
+	}
 	for(i = 0; i < MAP_SIZE; ++i)
 	{
 		for(j = 0; j < MAP_SIZE; ++j)
@@ -244,17 +266,41 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 				sprintf(buf, "%d", map[i][j]);
 			}
 			if(TEMP_FAILURE_RETRY(write(clientfd, buf, strlen(buf))) == -1)
-				ERR("write");
+			{
+				if(errno == EPIPE)
+				{
+					work_tab[targ->thread_id - 1] = 0;
+					free_map(map);
+					return;
+				}
+				else ERR("write");
+			}
 		}
 		if(TEMP_FAILURE_RETRY(write(clientfd, eol, strlen(eol))) == -1)
-			ERR("write");
+		{
+			if(errno == EPIPE)
+			{
+				work_tab[targ->thread_id - 1] = 0;
+				free_map(map);
+				return;
+			}
+			else ERR("write");
+		}
 	}
 	
 	// cash
 	sprintf(c, "cash: %d\n", cash);
 	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
-		ERR("write");
-
+	{
+		if(errno == EPIPE)
+		{
+			work_tab[targ->thread_id - 1] = 0;
+			free_map(map);
+			return;
+		}
+		else ERR("write");
+	}
+	
 	// direction
 	char *dir;
 	if(*dx == -1) dir = "up";
@@ -264,13 +310,17 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 	
 	sprintf(c, "direction: %s\n", dir);
 	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
-		ERR("write");
-	
-	for(i = 0; i < MAP_SIZE; ++i)
 	{
-		free(map[i]);
+		if(errno == EPIPE)
+		{
+			work_tab[targ->thread_id - 1] = 0;
+			free_map(map);
+			return;
+		}
+		else ERR("write");
 	}
-	free(map);
+	
+	free_map(map);
 }
 
 // returns number of free places on map and fills *x, *y
@@ -343,9 +393,11 @@ void *map_timer_func(void *arg)
 	
 	memcpy(&targ, arg, sizeof(targ));
 	
+	sethandler(SIG_IGN, SIGPIPE);
+	
 	while(1)
 	{
-		if(!work)
+		if(!work || !work_tab[(targ.thread_id) - 1])
 			pthread_exit(NULL);
 			
 		for(t = REWRITE_TIME;t > 0;t = sleep(t));
@@ -356,8 +408,9 @@ void *map_timer_func(void *arg)
 }
 
 void set_map_timer(pthread_t *timer_p, int taxi_id, int clientfd, int **map, int *cash, taxi_order *orders, timer_arg *arg,
-	int *dx, int *dy)
+	int *dx, int *dy, int thread_id)
 {
+	arg->thread_id = thread_id;
 	arg->clientfd = clientfd;
 	arg->map = map;
 	arg->cash = cash;
@@ -439,9 +492,10 @@ void *client_thread_func(void *arg)
 	
 	while(1)
 	{
-		if(!work)
+		if(!work || !work_tab[(c_arg.id) - 1])
 			pthread_exit(NULL);
 			
+		// TODO: prevent waiting for disconnected player - check if connection is closed
 		if ((size = TEMP_FAILURE_RETRY(recv(c_arg.clientfd, buffer, CHUNKSIZE, MSG_WAITALL))) == -1)
 			ERR("read");
 		
@@ -461,8 +515,9 @@ void *client_thread_func(void *arg)
 	return NULL;
 }
 
-void set_client_thread(pthread_t *p, int clientfd, client_thread_arg *c_arg, int *dir)
+void set_client_thread(pthread_t *p, int clientfd, client_thread_arg *c_arg, int *dir, int id)
 {
+	c_arg->id = id;
 	c_arg->clientfd = clientfd;
 	c_arg->dir = dir;
 	
@@ -614,6 +669,7 @@ void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi, pt
 	}
 	
 	(targ->map)[x][y] = sign_under_taxi;
+	work_tab[(targ->id) - 1] = 0;
 }
 
 void communicate(int clientfd, thread_arg *targ)
@@ -631,19 +687,21 @@ void communicate(int clientfd, thread_arg *targ)
 	
 	put_player_on_map(targ->map, x, y, targ->id, &sign_under_taxi);
 	
+	work_tab[(targ->id) - 1] = 1;
+	
 	// create thread for map refreshing
 	pthread_t timer_p;
 	timer_arg t_arg;
-	set_map_timer(&timer_p, targ->id, clientfd, targ->map, &cash, targ->orders, &t_arg, &dx, &dy);
+	set_map_timer(&timer_p, targ->id, clientfd, targ->map, &cash, targ->orders, &t_arg, &dx, &dy, targ->id);
 	
 	// create thread for client input
 	pthread_t client_p;
 	client_thread_arg c_arg;
-	set_client_thread(&client_p, clientfd, &c_arg, &dir); 
+	set_client_thread(&client_p, clientfd, &c_arg, &dir, targ->id); 
 	
 	// move taxi every second
 	int t;
-	while(cash > 0 && work)
+	while(cash > 0 && work && work_tab[(targ->id) - 1])  // check if server and client thread are working
 	{
 		for(t = 1; t > 0; t = sleep(t));
 		update_map(&x, &y, &dx, &dy, &dir, targ, &sign_under_taxi, &cash);
