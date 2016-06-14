@@ -19,7 +19,7 @@
 
 #define BACKLOG 3
 #define CHUNKSIZE 2
-#define THREAD_NUM 20
+#define THREAD_NUM 95
 #define TURNINGS 4
 #define SPEED 4
 #define MAP_SIZE TURNINGS*SPEED + 1
@@ -288,7 +288,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 		}
 	}
 	
-	// cash
+	// print cash
 	sprintf(c, "cash: %d\n", cash);
 	if(TEMP_FAILURE_RETRY(write(clientfd, c, strlen(c))) == -1)
 	{
@@ -301,7 +301,7 @@ void print_client(int clientfd, timer_arg *targ)  // don't forget htons
 		else ERR("write");
 	}
 	
-	// direction
+	// print direction
 	char *dir;
 	if(*dx == -1) dir = "up";
 	if(*dx == 1) dir = "down";
@@ -495,9 +495,15 @@ void *client_thread_func(void *arg)
 		if(!work || !work_tab[(c_arg.id) - 1])
 			pthread_exit(NULL);
 			
-		// TODO: prevent waiting for disconnected player - check if connection is closed
 		if ((size = TEMP_FAILURE_RETRY(recv(c_arg.clientfd, buffer, CHUNKSIZE, MSG_WAITALL))) == -1)
+		{
+			//if(errno == EAGAIN || errno == EWOULDBLOCK) 
+			//{
+			//	work_tab[c_arg->id - 1] = 0;
+			//	pthread_exit(NULL);
+			//}
 			ERR("read");
+		}
 		
 		switch(buffer[0])
 		{
@@ -670,6 +676,8 @@ void clear_on_disconnect(thread_arg *targ, int x, int y, int sign_under_taxi, pt
 	
 	(targ->map)[x][y] = sign_under_taxi;
 	work_tab[(targ->id) - 1] = 0;
+	if(pthread_join(timer_p, NULL) != 0) ERR("pthread join");
+	if(pthread_join(client_p, NULL) != 0) ERR("pthread join");
 }
 
 void communicate(int clientfd, thread_arg *targ)
